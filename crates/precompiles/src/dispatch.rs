@@ -9,7 +9,7 @@ use alloy::{
     sol,
     sol_types::{SolCall, SolError},
 };
-use revm::precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult};
+use evm2::precompiles::{PrecompileError, PrecompileHalt, PrecompileResult};
 
 sol! {
     error StaticCallNotAllowed();
@@ -18,13 +18,13 @@ sol! {
 /// Dispatches a parameterless view call, encoding the return via `T`.
 #[inline]
 pub fn metadata<T: SolCall>(f: impl FnOnce() -> Result<T::Return>) -> PrecompileResult {
-    f().into_precompile_result(0, 0, |ret| T::abi_encode_returns(&ret).into())
+    f().into_precompile_result(|ret| T::abi_encode_returns(&ret).into())
 }
 
 /// Dispatches a read-only call with decoded arguments, encoding the return via `T`.
 #[inline]
 pub fn view<T: SolCall>(call: T, f: impl FnOnce(T) -> Result<T::Return>) -> PrecompileResult {
-    f(call).into_precompile_result(0, 0, |ret| T::abi_encode_returns(&ret).into())
+    f(call).into_precompile_result(|ret| T::abi_encode_returns(&ret).into())
 }
 
 /// Dispatches a state-mutating call that returns ABI-encoded data.
@@ -37,13 +37,11 @@ pub fn mutate<T: SolCall>(
     f: impl FnOnce(Address, T) -> Result<T::Return>,
 ) -> PrecompileResult {
     if StorageCtx.is_static() {
-        return Ok(PrecompileOutput::revert(
-            0,
+        return Err(PrecompileError::Revert(
             StaticCallNotAllowed {}.abi_encode().into(),
-            StorageCtx.reservoir(),
         ));
     }
-    f(sender, call).into_precompile_result(0, 0, |ret| T::abi_encode_returns(&ret).into())
+    f(sender, call).into_precompile_result(|ret| T::abi_encode_returns(&ret).into())
 }
 
 /// Dispatches a state-mutating call that returns no data (e.g. `approve`, `transfer`).
@@ -56,13 +54,11 @@ pub fn mutate_void<T: SolCall>(
     f: impl FnOnce(Address, T) -> Result<()>,
 ) -> PrecompileResult {
     if StorageCtx.is_static() {
-        return Ok(PrecompileOutput::revert(
-            0,
+        return Err(PrecompileError::Revert(
             StaticCallNotAllowed {}.abi_encode().into(),
-            StorageCtx.reservoir(),
         ));
     }
-    f(sender, call).into_precompile_result(0, 0, |()| Bytes::new())
+    f(sender, call).into_precompile_result(|()| Bytes::new())
 }
 
 /// Sets TIP-1060 storage creation mode to Preserve for the given storage-credit owner.
@@ -81,39 +77,9 @@ pub fn preserve_storage_credits(credit_owner: Address) -> Result<()> {
 #[inline]
 pub fn charge_input_cost(storage: &mut StorageCtx, calldata: &[u8]) -> Option<PrecompileResult> {
     if storage.deduct_gas(input_cost(calldata.len())).is_err() {
-        return Some(Ok(storage.halt_output(PrecompileHalt::OutOfGas)));
+        return Some(Err(PrecompileHalt::OutOfGas.into()));
     }
     None
-}
-
-/// Fills state gas accounting on a [`PrecompileOutput`] from the storage context.
-///
-/// State gas / reservoir tracking is only set when TIP-1016 (EIP-8037) is enabled.
-/// When disabled, `state_gas_used` must remain 0 to avoid leaking into revm's reservoir
-/// accounting and corrupting `tx_gas_used()` via `handle_reservoir_remaining_gas`.
-///
-/// SSTORE refund propagation is activated unconditionally at T4 so the
-/// `TempoPrecompileProvider` wrapper can apply refunds with `record_refund`. Pre-T4
-/// blocks were executed without refund propagation, so we cannot change their gas
-/// accounting.
-#[inline]
-fn fill_state_gas(output: &mut PrecompileOutput, storage: &StorageCtx) {
-    if storage.spec().is_t4() && output.is_success() {
-        output.gas_refunded = storage.gas_refunded();
-    }
-
-    if storage.amsterdam_eip8037_enabled() {
-        if output.is_success() {
-            // On success: parent takes the child's final reservoir.
-            output.reservoir = storage.reservoir();
-            output.state_gas_used = storage.state_gas_used();
-        } else {
-            // On revert or halt: state changes are undone, so ALL state gas returns
-            // to the parent's reservoir.
-            output.reservoir = storage.state_gas_used() + storage.reservoir();
-            output.state_gas_used = 0;
-        }
-    }
 }
 
 /// Decodes calldata via `decode`, then dispatches to `f`.
@@ -126,8 +92,6 @@ pub fn dispatch_call<T>(
     decode: impl FnOnce(&[u8]) -> core::result::Result<T, alloy::sol_types::Error>,
     f: impl FnOnce(T) -> PrecompileResult,
 ) -> PrecompileResult {
-    let storage = StorageCtx::default();
-
     if calldata.len() < 4 {
         return missing_selector_result();
     }
@@ -135,16 +99,12 @@ pub fn dispatch_call<T>(
     let result = decode(calldata);
 
     match result {
-        Ok(call) => f(call).map(|mut res| {
-            // TODO: fix this, each precompile handler should either return output with proper gas values or don't return any gas values at all.
-            res.gas_used = storage.gas_used();
-            fill_state_gas(&mut res, &storage);
-            res
-        }),
-        Err(alloy::sol_types::Error::UnknownSelector { selector, .. }) => storage.error_result(
-            error::TempoPrecompileError::UnknownFunctionSelector(*selector),
-        ),
-        Err(_) => Ok(storage.revert_output(Bytes::new())),
+        Ok(call) => f(call),
+        Err(alloy::sol_types::Error::UnknownSelector { selector, .. }) => StorageCtx::default()
+            .error_result(error::TempoPrecompileError::UnknownFunctionSelector(
+                *selector,
+            )),
+        Err(_) => Err(PrecompileError::Revert(Bytes::new())),
     }
 }
 
@@ -201,11 +161,9 @@ pub fn missing_selector_result() -> PrecompileResult {
     let storage = StorageCtx::default();
 
     if storage.spec().is_t1() {
-        Ok(storage.revert_output(Bytes::new()))
+        Err(PrecompileError::Revert(Bytes::new()))
     } else {
-        Ok(storage.halt_output(PrecompileHalt::Other(
-            "Invalid input: missing function selector".into(),
-        )))
+        Err(PrecompileHalt::Other("Invalid input: missing function selector".into()).into())
     }
 }
 
