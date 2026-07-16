@@ -212,7 +212,6 @@ reth-revm = { git = "https://github.com/paradigmxyz/reth", rev = "1bf2384", feat
   "optional-checks",
 ] }
 revm = { version = "41.0.0", features = ["optional_fee_charge"], default-features = false }
-
 alloy = { version = "2.1.1", default-features = false }
 alloy-consensus = { version = "2.1.1", default-features = false }
 alloy-contract = { version = "2.1.1", default-features = false }
@@ -222,9 +221,9 @@ alloy-evm = { version = "0.37.1", default-features = false }
 revm-inspectors = "=0.41.0"
 alloy-genesis = { version = "2.1.1", default-features = false }
 alloy-hardforks = "0.4.7"
-alloy-json-abi = { version = "1.6.0", default-features = false }
+alloy-json-abi = { version = "1.6.1", default-features = false }
 alloy-network = { version = "2.1.1", default-features = false }
-alloy-primitives = { version = "1.6.0", default-features = false }
+alloy-primitives = { version = "1.6.1", default-features = false }
 alloy-provider = { version = "2.1.1", default-features = false }
 alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-rpc-types-admin = "2.1.1"
@@ -239,7 +238,7 @@ alloy-signer-ledger = "2.1.1"
 alloy-signer-local = "2.1.1"
 alloy-signer-trezor = "2.1.1"
 
-alloy-sol-types = { version = "1.6.0", default-features = false }
+alloy-sol-types = { version = "1.6.1", default-features = false }
 alloy-json-rpc = "2.1.1"
 alloy-transport = "2.1.1"
 
