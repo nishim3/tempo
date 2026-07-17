@@ -1,5 +1,5 @@
 [workspace.package]
-version = "1.10.1"
+version = "1.11.0"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["Tempo Contributors"]
@@ -212,6 +212,7 @@ reth-revm = { git = "https://github.com/paradigmxyz/reth", rev = "1bf2384", feat
   "optional-checks",
 ] }
 revm = { version = "41.0.0", features = ["optional_fee_charge"], default-features = false }
+
 alloy = { version = "2.1.1", default-features = false }
 alloy-consensus = { version = "2.1.1", default-features = false }
 alloy-contract = { version = "2.1.1", default-features = false }
